@@ -2,7 +2,7 @@ import express from "express";
 import router from "./routes/router";
 
 const app = express();
-const PORT = process.env.PORT ?? 8000;
+const PORT = process.env.PORT ?? 80;
 
 app.use("/", router);
 

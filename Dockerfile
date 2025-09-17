@@ -1,27 +1,27 @@
-# Stage 1
-
-FROM node:18 as builder
+# Stage 1: Builder
+FROM node:18-alpine AS builder
 
 WORKDIR /build
 
-COPY package*.json .
-RUN npm install
+COPY package*.json ./
+RUN npm install --production=false
 
 COPY src/ src/
-COPY tsconfig.json tsconfig.json
+COPY tsconfig.json ./
 
 RUN npm run build
 
 
-
-# Stage 2
-
-FROM node:18 as runner
+# Stage 2: Runner
+FROM node:18-alpine AS runner
 
 WORKDIR /app
 
-COPY --from=builder build/package*.json .
-COPY --from=builder build/node_modules node_modules/
-COPY --from=builder build/dist dist/
+# Copy only necessary files from builder
+COPY --from=builder /build/package*.json ./
+COPY --from=builder /build/node_modules ./node_modules
+COPY --from=builder /build/dist ./dist
 
-CMD [ "npm", "start" ]
+EXPOSE 80
+
+CMD ["npm", "start"]
