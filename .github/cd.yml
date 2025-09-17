@@ -1,0 +1,104 @@
+name: Node App Build and Push to ECR, and Deploy to ECS
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_to_ecs:
+        description: 'Deploy to ECS after build?'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build and Push Docker Image to ECR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        run: |
+          REPOSITORY_URI=${{ vars.ECR_REGISTRY_AUTHORIZATION }}
+          CURRENT_TAG=$REPOSITORY_URI:${{ github.sha }}
+          LATEST_TAG=$REPOSITORY_URI:latest
+
+          echo "Building image: $CURRENT_TAG"
+          docker build -t $CURRENT_TAG -f ./apps/authorization/Dockerfile.prod .
+          docker tag $CURRENT_TAG $LATEST_TAG
+
+      - name: Push to ECR
+        run: |
+          REPOSITORY_URI=${{ vars.ECR_REGISTRY_AUTHORIZATION }}
+          CURRENT_TAG=$REPOSITORY_URI:${{ github.sha }}
+          LATEST_TAG=$REPOSITORY_URI:latest
+
+          echo "Pushing images to ECR..."
+          docker push $CURRENT_TAG
+          docker push $LATEST_TAG
+
+      - name: Build Summary
+        run: |
+          echo "## ✅ Build Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** \`${{ vars.ECR_REGISTRY_AUTHORIZATION }}\`" >> $GITHUB_STEP_SUMMARY
+
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.deploy_to_ecs == true }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Download current task definition
+        run: |
+          echo "📥 Downloading task definition: ${{ vars.ECS_TASK_DEFINITION_AUTHZ }}"
+          aws ecs describe-task-definition \
+            --task-definition ${{ vars.ECS_TASK_DEFINITION_AUTHZ }} \
+            --query taskDefinition > ${{ vars.ECS_TASK_DEFINITION_AUTHZ }}.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ vars.ECS_TASK_DEFINITION_AUTHZ }}.json
+          container-name: ${{ vars.CONTAINER_NAME_AUTHZ }}
+          image: ${{ vars.ECR_REGISTRY_AUTHORIZATION }}:${{ github.sha }}
+
+      - name: Deploy to ECS
+        id: deploy
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE_NAME_AUTHZ }}
+          cluster: ${{ vars.ECS_CLUSTER_NAME_ES }}
+          wait-for-service-stability: true
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ vars.ECS_SERVICE_NAME_AUTHZ }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Cluster:** ${{ vars.ECS_CLUSTER_NAME_ES }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ vars.ECR_REGISTRY_AUTHORIZATION }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Task Definition:** \`${{ vars.ECS_TASK_DEFINITION_AUTHZ }}\`" >> $GITHUB_STEP_SUMMARY
+
+          echo "**See the [ECS Console](https://${{ vars.AWS_REGION }}.console.aws.amazon.com/ecs/v2/clusters/${{ vars.ECS_CLUSTER_NAME_ES }}/services/${{ vars.ECS_SERVICE_NAME_AUTHZ }}/events?region=${{ vars.AWS_REGION }}) for more details.**" >> $GITHUB_STEP_SUMMARY
