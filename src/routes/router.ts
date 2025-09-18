@@ -8,6 +8,10 @@ router.get("/health", (req, res) => {
   res.status(200).json({ message: "Everything is good here 👀" });
 });
 
+router.get("/updated", (req, res) => {
+  res.status(200).json({ message: "Bro got updated!!!" });
+});
+
 // New route to show environment variables
 router.get("/env", (req, res) => {
   res.json({
